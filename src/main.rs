@@ -1,17 +1,24 @@
 #[macro_use]
 extern crate log;
 
+mod anal_notif_handler;
+mod constants;
+
 use crossbeam::channel::{self, Receiver, Sender};
 use decibel::{AmplitudeRatio, DecibelRatio};
 use failure::Error;
 use gio::prelude::*;
 use gtk::prelude::*;
 use jack::{
-    AsyncClient, AudioIn, Client, ClientOptions, ClosureProcessHandler, Control, ProcessHandler,
+    AsyncClient, AudioIn, Client, ClientOptions, ClosureProcessHandler, Control,
+    NotificationHandler, ProcessHandler,
 };
 use lazy_static::lazy_static;
 
 use std::{env, marker::Send, sync::Mutex};
+
+use anal_notif_handler::AnalNotifHandler;
+use constants::ANAL_JACK_CLIENT_NAME;
 
 pub struct Next;
 
@@ -42,7 +49,7 @@ fn main() {
         let rx = rx.clone();
         let tx_cmd = tx_cmd.clone();
 
-        area.connect_draw(move |_area_self, ctxt| {
+        area.connect_draw(move |area_self, ctxt| {
             lazy_static! {
                 static ref GAIN: Mutex<f64> = Mutex::new(MIN_GAIN);
             }
@@ -82,6 +89,7 @@ fn main() {
             ctxt.fill();
             ctxt.stroke();
 
+            area_self.queue_draw();
             Inhibit(false)
         });
 
@@ -96,12 +104,15 @@ fn prepare_jack_client(
     rx_cmd: Receiver<Next>,
 ) -> Result<
     (
-        AsyncClient<(), impl 'static + Send + Sync + ProcessHandler>,
+        AsyncClient<
+            impl 'static + Send + Sync + NotificationHandler,
+            impl 'static + Send + Sync + ProcessHandler,
+        >,
         Receiver<f32>,
     ),
     Error,
 > {
-    let (client, _status) = Client::new("anal", ClientOptions::NO_START_SERVER)?;
+    let (client, _status) = Client::new(ANAL_JACK_CLIENT_NAME, ClientOptions::NO_START_SERVER)?;
 
     let in_1 = client.register_port("in_1", AudioIn::default())?;
     let in_2 = client.register_port("in_2", AudioIn::default())?;
@@ -133,7 +144,7 @@ fn prepare_jack_client(
 
     let process = ClosureProcessHandler::new(process_callback);
 
-    let active_client = client.activate_async((), process)?;
+    let active_client = client.activate_async(AnalNotifHandler, process)?;
 
     Ok((active_client, rx))
 }
